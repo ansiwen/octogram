@@ -280,32 +280,34 @@ func (this *Piece) Matches(op *OrientedPiece) bool {
 type PieceField [][]PieceID
 
 type Board struct {
+	w, h, depth      int
 	s                PieceField
-	w, h             int
-	off_board_pieces []Piece
-	//	queue            Positions
+	pieces           []Piece
+	off_board_pieces []bool
 }
 
 // NewBoard returns an empty Board of the specified width and height.
 func NewBoard(w, h int, pieces []Piece) *Board {
-	s := make(PieceField, h)
-	for i := range s {
-		s[i] = make([]PieceID, w)
+	b := Board{w: w, h: h}
+	b.s = make(PieceField, h)
+	for i := range b.s {
+		b.s[i] = make([]PieceID, w)
 	}
-	return &Board{s: s, w: w, h: h, off_board_pieces: pieces}
+	b.pieces = pieces
+	b.off_board_pieces = make([]bool, len(pieces))
+	for i := range pieces {
+		b.off_board_pieces[i] = true
+	}
+	return &b
 }
 
 func (this *Board) Copy() *Board {
-	new_board := Board{h: this.h, w: this.w}
-	new_board.off_board_pieces = make([]Piece, len(this.off_board_pieces))
-	copy(new_board.off_board_pieces, this.off_board_pieces)
+	new_board := Board{h: this.h, w: this.w, depth: this.depth}
 	new_board.s = this.s.Copy()
+	new_board.pieces = this.pieces
+	new_board.off_board_pieces = make([]bool, len(this.off_board_pieces))
+	copy(new_board.off_board_pieces, this.off_board_pieces)
 	return &new_board
-}
-
-// Set sets the state of the specified cell to the given value.
-func (this *Board) Set(x, y int, id PieceID) {
-	this.s[x][y] = id
 }
 
 func (this *Board) Get(x, y int) PieceID {
@@ -323,17 +325,17 @@ func (this *Board) Contains(x, y int) bool {
 	return false
 }
 
-func (this *Board) Insert(x, y int, op *OrientedPiece, id PieceID) (bool, Positions) {
+func (this *Board) Insert(x, y int, op *OrientedPiece, id PieceID) (bool, *Positions) {
 	if x < 0 || y < 0 || x+op.h > this.h || y+op.w > this.w {
-		return false, Positions{}
+		return false, nil
 	}
 	for _, p := range op.body {
 		if this.Get(p.x+x, p.y+y) != 0 {
-			return false, Positions{}
+			return false, nil
 		}
 	}
 	for _, p := range op.body {
-		this.Set(p.x+x, p.y+y, id)
+		this.s[p.x+x][p.y+y] = id
 	}
 	var new_seeds Positions
 	for _, p := range op.border {
@@ -342,20 +344,20 @@ func (this *Board) Insert(x, y int, op *OrientedPiece, id PieceID) (bool, Positi
 			new_seeds = append(new_seeds, p2)
 		}
 	}
-	return true, new_seeds
+	return true, &new_seeds
 }
 
 func (this *Board) Remove(x, y int, op *OrientedPiece) {
 	for _, p := range op.body {
-		this.Set(p.x+x, p.y+y, PieceID(0))
+		this.s[p.x+x][p.y+y] = 0
 	}
 }
 
 func (this *Board) CheckCorners() bool {
 	// corner fields have additional conditions to skip equivalent solutions
-	if this.Get(0, this.w-1) == 0 || this.Get(0, this.w-1) > this.Get(0, 0) &&
-		this.Get(this.h-1, 0) == 0 || this.Get(this.h-1, 0) > this.Get(0, this.w-1) &&
-		this.Get(this.h-1, this.w-1) == 0 || this.Get(this.h-1, this.w-1) > this.Get(this.h-1, 0) {
+	if (this.s[0][this.w-1] == 0 || this.s[0][this.w-1] > this.s[0][0]) &&
+		(this.s[this.h-1][0] == 0 || this.s[this.h-1][0] > this.s[0][this.w-1]) &&
+		(this.s[this.h-1][this.w-1] == 0 || this.s[this.h-1][this.w-1] > this.s[this.h-1][0]) {
 		return true
 	}
 	return false
@@ -363,9 +365,9 @@ func (this *Board) CheckCorners() bool {
 
 //var count int = 0
 
-func (this *Board) Fill2(x, y int, piece *Piece, queue Positions) {
-	//fmt.Println("Fill2")
+func (this *Board) fillWithPiece(x, y, p_idx int, queue Positions) {
 	// iterate over all oriented pieces
+	piece := &this.pieces[p_idx]
 	for i := range piece.ops {
 		//fmt.Println(i)
 		op := &piece.ops[i]
@@ -375,16 +377,17 @@ func (this *Board) Fill2(x, y int, piece *Piece, queue Positions) {
 			ok, new_seeds := this.Insert(p.x, p.y, op, piece.id)
 			if ok {
 				if this.CheckCorners() {
-					if len(this.off_board_pieces) == 0 {
-						// fmt.Println("SOLUTION")
+					if this.depth == len(this.pieces)-1 {
+						// solution found
 						ch <- this.s.Copy()
-						//						fmt.Print("\x0c", this.s)
-						//						count++
-						//						fmt.Println(count)
 					} else {
-						new_queue := append(queue, new_seeds...)
-						this.Fill(new_queue)
+						new_queue := append(queue, *new_seeds...)
+						this.depth++
+						this.FillPositions(new_queue)
+						this.depth--
 					}
+				} else {
+					//fmt.Println("skipped solution")
 				}
 				this.Remove(p.x, p.y, op)
 			}
@@ -392,38 +395,42 @@ func (this *Board) Fill2(x, y int, piece *Piece, queue Positions) {
 	}
 }
 
-func (this *Board) Fill(queue Positions) {
-	//fmt.Println("Fill")
+func (this *Board) FillPositions(queue Positions) {
 	var seed Position
-	var top_level bool = false
 	for i := range queue {
 		seed = queue[i]
-		if this.Get(seed.x, seed.y) == 0 {
+		if this.s[seed.x][seed.y] == 0 {
 			queue = queue[i+1:]
 			break
 		}
 	}
 	// we have a free seed now
-	number_of_pieces := len(this.off_board_pieces)
-	if number_of_pieces == len(pieces_init) {
-		top_level = true
-		number_of_pieces -= 3 // in first recursion we skip the last three pieces
-	}
 	// rotate over all pieces
-	for n := 0; n < number_of_pieces; n++ {
-		piece := this.off_board_pieces[0]
-		this.off_board_pieces = this.off_board_pieces[1:]
-		if top_level {
+	for i := range this.off_board_pieces {
+		if !this.off_board_pieces[i] {
+			continue
+		}
+		this.off_board_pieces[i] = false
+		if this.depth == 0 {
+			// top recursion level
 			new_queue := make(Positions, len(queue))
 			copy(new_queue, queue)
-			fmt.Println("Spawn new goprocess")
+			fmt.Println("Spawn new goprocess for piece ", i)
 			new_board := this.Copy()
-			go new_board.Fill2(seed.x, seed.y, &piece, new_queue)
+			go new_board.fillWithPiece(seed.x, seed.y, i, new_queue)
 		} else {
-			this.Fill2(seed.x, seed.y, &piece, queue)
+			// if this.depth == 1 {
+			// 	fmt.Println("Fill with piece ", i)
+			// }
+			this.fillWithPiece(seed.x, seed.y, i, queue)
 		}
-		this.off_board_pieces = append(this.off_board_pieces, piece)
+		this.off_board_pieces[i] = true
 	}
+}
+
+func (this *Board) Fill() {
+	seed_init := Positions{Position{0, 0}}
+	go this.FillPositions(seed_init)
 }
 
 // // Next returns the state of the specified cell at the next time step.
@@ -507,7 +514,7 @@ func (pf PieceField) GetRune(x, y int) rune {
 	var result rune
 	var up, down, right, left bool
 	id := pf[x][y]
-	//	return 'A' - 1 + rune(id)
+	return 'A' - 1 + rune(id)
 	return '🍅' - 1 + rune(id)
 	if x > 0 && pf[x-1][y] == id {
 		up = true
@@ -556,15 +563,6 @@ func (pf PieceField) GetRune(x, y int) rune {
 	return result
 }
 
-// func main() {
-// 	l := NewLife(40, 15)
-// 	for i := 0; i < 300; i++ {
-// 		l.Step()
-// 		fmt.Print("\x0c", l) // Clear screen and print Board.
-// 		time.Sleep(time.Second / 30)
-// 	}
-// }
-
 var ch = make(chan PieceField)
 
 func main() {
@@ -587,9 +585,7 @@ func main() {
 	//	fmt.Println(pieces)
 	b := NewBoard(8, 8, pieces)
 	//	fmt.Println(b)
-	seed_init := Positions{Position{0, 0}}
-	fmt.Println(seed_init)
-	go b.Fill(seed_init)
+	b.Fill()
 	cnt := 0
 	for {
 		pf := <-ch
