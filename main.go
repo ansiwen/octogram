@@ -16,8 +16,11 @@ var cpuprofile = flag.String("cpuprofile", "", "write cpu profile to file")
 
 //const piece_size_max int = 5
 
-// list of available tiles
-var pieces_init = [][][]int{
+type PieceID int
+type PieceField [][]PieceID
+
+// list of available pieces
+var pieces_init = [...]PieceField{
 	{
 		{1, 1, 1, 1, 1},
 	},
@@ -78,7 +81,7 @@ var pieces_init = [][][]int{
 	},
 }
 
-type PieceID int
+const NumberOfPieces = len(pieces_init)
 
 ///////////////////////////////
 // Position
@@ -139,7 +142,7 @@ func (this OrientedPiece) String() string {
 	return result.String()
 }
 
-func NewOrientedPiece(p [][]int) OrientedPiece {
+func NewOrientedPiece(p PieceField) OrientedPiece {
 	var op OrientedPiece
 	op.h = len(p)
 	body_map := make(map[Position]struct{})
@@ -158,7 +161,7 @@ func NewOrientedPiece(p [][]int) OrientedPiece {
 			}
 		}
 	}
-	op.body = make([]Position, len(body_map))
+	op.body = make(Positions, len(body_map))
 	i := 0
 	for k := range body_map {
 		op.body[i] = k
@@ -230,7 +233,7 @@ func (this Piece) String() string {
 	return fmt.Sprintf("id: %v\n%v\n", this.id, this.ops)
 }
 
-func NewPiece(p [][]int, id PieceID) Piece {
+func NewPiece(p PieceField, id PieceID) Piece {
 	new_piece := Piece{id: id}
 	op := NewOrientedPiece(p)
 	new_piece.ops = append(new_piece.ops, op)
@@ -277,36 +280,36 @@ func (this *Piece) Matches(op *OrientedPiece) bool {
 ///////////////////////////////
 // Board
 ///////////////////////////////
-type PieceField [][]PieceID
 
 type Board struct {
 	w, h, depth      int
 	s                PieceField
-	pieces           []Piece
-	off_board_pieces []bool
+	pieces           [NumberOfPieces]Piece
+	off_board_pieces [NumberOfPieces]bool
 }
 
 // NewBoard returns an empty Board of the specified width and height.
-func NewBoard(w, h int, pieces []Piece) *Board {
+func NewBoard(w, h int, pieces [NumberOfPieces]Piece) Board {
 	b := Board{w: w, h: h}
 	b.s = make(PieceField, h)
 	for i := range b.s {
 		b.s[i] = make([]PieceID, w)
 	}
 	b.pieces = pieces
-	b.off_board_pieces = make([]bool, len(pieces))
+	//	b.off_board_pieces = make([]bool, len(pieces))
 	for i := range pieces {
 		b.off_board_pieces[i] = true
 	}
-	return &b
+	return b
 }
 
 func (this *Board) Copy() *Board {
 	new_board := Board{h: this.h, w: this.w, depth: this.depth}
 	new_board.s = this.s.Copy()
 	new_board.pieces = this.pieces
-	new_board.off_board_pieces = make([]bool, len(this.off_board_pieces))
-	copy(new_board.off_board_pieces, this.off_board_pieces)
+	//	new_board.off_board_pieces = make([]bool, len(this.off_board_pieces))
+	//	copy(new_board.off_board_pieces, this.off_board_pieces)
+	new_board.off_board_pieces = this.off_board_pieces
 	return &new_board
 }
 
@@ -355,7 +358,10 @@ func (this *Board) Remove(x, y int, op *OrientedPiece) {
 
 func (this *Board) CheckCorners() bool {
 	// corner fields have additional conditions to skip equivalent solutions
-	if (this.s[0][this.w-1] == 0 || this.s[0][this.w-1] > this.s[0][0]) &&
+	if this.s[0][0] < PieceID(NumberOfPieces-2) &&
+		this.s[0][this.w-1] < PieceID(NumberOfPieces-1) &&
+		this.s[this.h-1][0] < PieceID(NumberOfPieces) &&
+		(this.s[0][this.w-1] == 0 || this.s[0][this.w-1] > this.s[0][0]) &&
 		(this.s[this.h-1][0] == 0 || this.s[this.h-1][0] > this.s[0][this.w-1]) &&
 		(this.s[this.h-1][this.w-1] == 0 || this.s[this.h-1][this.w-1] > this.s[this.h-1][0]) {
 		return true
@@ -376,6 +382,8 @@ func (this *Board) fillWithPiece(x, y, p_idx int, queue Positions) {
 			p := Position{x - offset.x, y - offset.y}
 			ok, new_seeds := this.Insert(p.x, p.y, op, piece.id)
 			if ok {
+				//fmt.Println("\x0c")
+				//fmt.Print("\x1b\x5b\x48\x1b\x5b\x32\x4a", this.s)
 				if this.CheckCorners() {
 					if this.depth == len(this.pieces)-1 {
 						// solution found
@@ -411,7 +419,7 @@ func (this *Board) FillPositions(queue Positions) {
 			continue
 		}
 		this.off_board_pieces[i] = false
-		if this.depth == 0 {
+		if this.depth == 0 && i < NumberOfPieces-3 && false {
 			// top recursion level
 			new_queue := make(Positions, len(queue))
 			copy(new_queue, queue)
@@ -432,54 +440,6 @@ func (this *Board) Fill() {
 	seed_init := Positions{Position{0, 0}}
 	go this.FillPositions(seed_init)
 }
-
-// // Next returns the state of the specified cell at the next time step.
-// func (f *Board) Next(x, y int) bool {
-// 	// Count the adjacent cells that are alive.
-// 	alive := 0
-// 	for i := -1; i <= 1; i++ {
-// 		for j := -1; j <= 1; j++ {
-// 			if (j != 0 || i != 0) && f.Alive(x+i, y+j) {
-// 				alive++
-// 			}
-// 		}
-// 	}
-// 	// Return next state according to the game rules:
-// 	//   exactly 3 neighbors: on,
-// 	//   exactly 2 neighbors: maintain current state,
-// 	//   otherwise: off.
-// 	return alive == 3 || alive == 2 && f.Alive(x, y)
-// }
-
-// // Life stores the state of a round of Conway's Game of Life.
-// type Life struct {
-// 	a, b *Board
-// 	w, h int
-// }
-
-// // NewLife returns a new Life game state with a random initial state.
-// func NewLife(w, h int) *Life {
-// 	a := NewField(w, h)
-// 	for i := 0; i < (w * h / 4); i++ {
-// 		a.Set(rand.Intn(w), rand.Intn(h), true)
-// 	}
-// 	return &Life{
-// 		a: a, b: NewField(w, h),
-// 		w: w, h: h,
-// 	}
-// }
-
-// // Step advances the game by one instant, recomputing and updating all cells.
-// func (l *Life) Step() {
-// 	// Update the state of the next Board (b) from the current Board (a).
-// 	for y := 0; y < l.h; y++ {
-// 		for x := 0; x < l.w; x++ {
-// 			l.b.Set(x, y, l.a.Next(x, y))
-// 		}
-// 	}
-// 	// Swap fields a and b.
-// 	l.a, l.b = l.b, l.a
-// }
 
 // String returns the game board as a string.
 
@@ -576,11 +536,10 @@ func main() {
 		defer pprof.StopCPUProfile()
 	}
 
-	var pieces []Piece
+	var pieces [NumberOfPieces]Piece
 	for i := range pieces_init {
 		id := PieceID(i + 1)
-		new_piece := NewPiece(pieces_init[i], id)
-		pieces = append(pieces, new_piece)
+		pieces[i] = NewPiece(pieces_init[i], id)
 	}
 	//	fmt.Println(pieces)
 	b := NewBoard(8, 8, pieces)
