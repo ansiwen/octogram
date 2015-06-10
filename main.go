@@ -14,10 +14,13 @@ import (
 
 var cpuprofile = flag.String("cpuprofile", "", "write cpu profile to file")
 
-//const piece_size_max int = 5
+const kPieceMaxSize = 5
+const kBoardHeight = 8
+const kBoardWidth = 8
 
 type PieceID int
-type PieceField [][]PieceID
+type PieceField [kPieceMaxSize][kPieceMaxSize]PieceID
+type BoardField [kBoardHeight][kBoardWidth]PieceID
 
 // list of available pieces
 var pieces_init = [...]PieceField{
@@ -93,16 +96,16 @@ type Position struct {
 
 type Positions []Position
 
-func (this Positions) Len() int {
-	return len(this)
+func (p Positions) Len() int {
+	return len(p)
 }
 
-func (this Positions) Swap(i, j int) {
-	this[i], this[j] = this[j], this[i]
+func (p Positions) Swap(i, j int) {
+	p[i], p[j] = p[j], p[i]
 }
 
-func (this Positions) Less(i, j int) bool {
-	if this[i].x < this[j].x || (this[i].x == this[j].x && this[i].y < this[j].y) {
+func (p Positions) Less(i, j int) bool {
+	if p[i].x < p[j].x || (p[i].x == p[j].x && p[i].y < p[j].y) {
 		return true
 	}
 	return false
@@ -116,16 +119,16 @@ type OrientedPiece struct {
 	body, border Positions
 }
 
-func (this OrientedPiece) String() string {
-	f := make([][]rune, this.h+2)
+func (op *OrientedPiece) String() string {
+	f := make([][]rune, op.h+2)
 	for i := range f {
-		f[i] = make([]rune, this.w+2)
+		f[i] = make([]rune, op.w+2)
 	}
 	var result bytes.Buffer
-	for _, p := range this.border {
+	for _, p := range op.border {
 		f[p.x+1][p.y+1] = '○'
 	}
-	for _, p := range this.body {
+	for _, p := range op.body {
 		f[p.x+1][p.y+1] = '●'
 	}
 	result.WriteString("\n")
@@ -144,15 +147,17 @@ func (this OrientedPiece) String() string {
 
 func NewOrientedPiece(p PieceField) OrientedPiece {
 	var op OrientedPiece
-	op.h = len(p)
 	body_map := make(map[Position]struct{})
 	border_map := make(map[Position]struct{})
 	for i := range p {
-		if len(p[i]) > op.w {
-			op.w = len(p[i])
-		}
 		for j := range p[i] {
 			if p[i][j] != 0 {
+				if i+1 > op.h {
+					op.h = i + 1
+				}
+				if j+1 > op.w {
+					op.w = j + 1
+				}
 				body_map[Position{i, j}] = struct{}{}
 				border_map[Position{i + 1, j}] = struct{}{}
 				border_map[Position{i - 1, j}] = struct{}{}
@@ -178,44 +183,53 @@ func NewOrientedPiece(p PieceField) OrientedPiece {
 	return op
 }
 
-func (this *OrientedPiece) Equals(rhs *OrientedPiece) bool {
-	if len(this.body) != len(rhs.body) ||
-		this.h != rhs.h || this.w != rhs.w {
+func (op *OrientedPiece) Copy() *OrientedPiece {
+	new_op := *op
+	new_op.body = make(Positions, len(op.body))
+	copy(new_op.body, op.body)
+	new_op.border = make(Positions, len(op.border))
+	copy(new_op.border, op.border)
+	return &new_op
+}
+
+func (op *OrientedPiece) Equals(rhs *OrientedPiece) bool {
+	if len(op.body) != len(rhs.body) ||
+		op.h != rhs.h || op.w != rhs.w {
 		return false
 	}
-	for i := range this.body {
-		if this.body[i] != rhs.body[i] {
+	for i := range op.body {
+		if op.body[i] != rhs.body[i] {
 			return false
 		}
 	}
 	return true
 }
 
-func (this *OrientedPiece) Rotate() OrientedPiece {
+func (op *OrientedPiece) Rotate() OrientedPiece {
 	var rotated OrientedPiece
-	rotated.h = this.w
-	rotated.w = this.h
-	for i := range this.body {
-		rotated.body = append(rotated.body, Position{x: this.w - 1 - this.body[i].y, y: this.body[i].x})
+	rotated.h = op.w
+	rotated.w = op.h
+	for i := range op.body {
+		rotated.body = append(rotated.body, Position{x: op.w - 1 - op.body[i].y, y: op.body[i].x})
 	}
 	sort.Sort(rotated.body)
-	for i := range this.border {
-		rotated.border = append(rotated.border, Position{x: this.w - 1 - this.border[i].y, y: this.border[i].x})
+	for i := range op.border {
+		rotated.border = append(rotated.border, Position{x: op.w - 1 - op.border[i].y, y: op.border[i].x})
 	}
 	sort.Sort(rotated.border)
 	return rotated
 }
 
-func (this *OrientedPiece) Mirror() OrientedPiece {
+func (op *OrientedPiece) Mirror() OrientedPiece {
 	var mirrored OrientedPiece
-	mirrored.h = this.w
-	mirrored.w = this.h
-	for i := range this.body {
-		mirrored.body = append(mirrored.body, Position{x: this.body[i].y, y: this.body[i].x})
+	mirrored.h = op.w
+	mirrored.w = op.h
+	for i := range op.body {
+		mirrored.body = append(mirrored.body, Position{x: op.body[i].y, y: op.body[i].x})
 	}
 	sort.Sort(mirrored.body)
-	for i := range this.border {
-		mirrored.border = append(mirrored.border, Position{x: this.border[i].y, y: this.border[i].x})
+	for i := range op.border {
+		mirrored.border = append(mirrored.border, Position{x: op.border[i].y, y: op.border[i].x})
 	}
 	sort.Sort(mirrored.border)
 	return mirrored
@@ -229,11 +243,11 @@ type Piece struct {
 	id  PieceID
 }
 
-func (this Piece) String() string {
-	return fmt.Sprintf("id: %v\n%v\n", this.id, this.ops)
+func (p Piece) String() string {
+	return fmt.Sprintf("id: %v\n%v\n", p.id, p.ops)
 }
 
-func NewPiece(p PieceField, id PieceID) Piece {
+func NewPiece(p PieceField, id PieceID) *Piece {
 	new_piece := Piece{id: id}
 	op := NewOrientedPiece(p)
 	new_piece.ops = append(new_piece.ops, op)
@@ -265,12 +279,21 @@ func NewPiece(p PieceField, id PieceID) Piece {
 	if !new_piece.Matches(&op) {
 		new_piece.ops = append(new_piece.ops, op)
 	}
-	return new_piece
+	return &new_piece
 }
 
-func (this *Piece) Matches(op *OrientedPiece) bool {
-	for i := range this.ops {
-		if this.ops[i].Equals(op) {
+func (p *Piece) Copy() *Piece {
+	new_piece := Piece{id: p.id}
+	new_piece.ops = make([]OrientedPiece, len(p.ops))
+	for i := range new_piece.ops {
+		new_piece.ops[i] = *p.ops[i].Copy()
+	}
+	return &new_piece
+}
+
+func (p *Piece) Matches(op *OrientedPiece) bool {
+	for i := range p.ops {
+		if p.ops[i].Equals(op) {
 			return true
 		}
 	}
@@ -282,88 +305,79 @@ func (this *Piece) Matches(op *OrientedPiece) bool {
 ///////////////////////////////
 
 type Board struct {
-	w, h, depth      int
-	s                PieceField
-	pieces           [NumberOfPieces]Piece
-	off_board_pieces [NumberOfPieces]bool
+	s           BoardField
+	pieces      [NumberOfPieces]Piece
+	used_pieces [NumberOfPieces]bool
+	ch          chan *BoardField
+	depth       int
 }
 
 // NewBoard returns an empty Board of the specified width and height.
-func NewBoard(w, h int, pieces [NumberOfPieces]Piece) Board {
-	b := Board{w: w, h: h}
-	b.s = make(PieceField, h)
-	for i := range b.s {
-		b.s[i] = make([]PieceID, w)
-	}
-	b.pieces = pieces
-	//	b.off_board_pieces = make([]bool, len(pieces))
-	for i := range pieces {
-		b.off_board_pieces[i] = true
-	}
-	return b
-}
-
-func (this *Board) Copy() *Board {
-	new_board := Board{h: this.h, w: this.w, depth: this.depth}
-	new_board.s = this.s.Copy()
-	new_board.pieces = this.pieces
-	//	new_board.off_board_pieces = make([]bool, len(this.off_board_pieces))
-	//	copy(new_board.off_board_pieces, this.off_board_pieces)
-	new_board.off_board_pieces = this.off_board_pieces
+func NewBoard(pieces *[NumberOfPieces]Piece, ch chan *BoardField) *Board {
+	new_board := Board{pieces: *pieces, ch: ch}
 	return &new_board
 }
 
-func (this *Board) Get(x, y int) PieceID {
-	if this.Contains(x, y) {
-		return this.s[x][y]
+func (b *Board) Copy() *Board {
+	new_board := *b
+	for i := range new_board.pieces {
+		new_board.pieces[i] = *b.pieces[i].Copy()
+	}
+	return &new_board
+}
+
+func (b *Board) Get(x, y int) PieceID {
+	if b.Contains(x, y) {
+		return b.s[x][y]
 	} else {
 		return PieceID(-1)
 	}
 }
 
-func (this *Board) Contains(x, y int) bool {
-	if x >= 0 && x < this.h && y >= 0 && y < this.w {
+func (b *Board) Contains(x, y int) bool {
+	if x >= 0 && x < kBoardHeight && y >= 0 && y < kBoardWidth {
 		return true
 	}
 	return false
 }
 
-func (this *Board) Insert(x, y int, op *OrientedPiece, id PieceID) (bool, *Positions) {
-	if x < 0 || y < 0 || x+op.h > this.h || y+op.w > this.w {
+func (b *Board) Insert(x, y int, op *OrientedPiece, id PieceID) (bool, *Positions) {
+	if x < 0 || y < 0 || x+op.h > kBoardHeight || y+op.w > kBoardWidth {
 		return false, nil
 	}
 	for _, p := range op.body {
-		if this.Get(p.x+x, p.y+y) != 0 {
+		if b.Get(p.x+x, p.y+y) != 0 {
 			return false, nil
 		}
 	}
 	for _, p := range op.body {
-		this.s[p.x+x][p.y+y] = id
+		b.s[p.x+x][p.y+y] = id
 	}
 	var new_seeds Positions
 	for _, p := range op.border {
 		p2 := Position{p.x + x, p.y + y}
-		if this.Contains(p2.x, p2.y) {
+		if b.Contains(p2.x, p2.y) {
 			new_seeds = append(new_seeds, p2)
 		}
 	}
 	return true, &new_seeds
 }
 
-func (this *Board) Remove(x, y int, op *OrientedPiece) {
+func (b *Board) Remove(x, y int, op *OrientedPiece) {
 	for _, p := range op.body {
-		this.s[p.x+x][p.y+y] = 0
+		b.s[p.x+x][p.y+y] = 0
 	}
 }
 
-func (this *Board) CheckCorners() bool {
+func (b *Board) CheckCorners() bool {
 	// corner fields have additional conditions to skip equivalent solutions
-	if this.s[0][0] < PieceID(NumberOfPieces-2) &&
-		this.s[0][this.w-1] < PieceID(NumberOfPieces-1) &&
-		this.s[this.h-1][0] < PieceID(NumberOfPieces) &&
-		(this.s[0][this.w-1] == 0 || this.s[0][this.w-1] > this.s[0][0]) &&
-		(this.s[this.h-1][0] == 0 || this.s[this.h-1][0] > this.s[0][this.w-1]) &&
-		(this.s[this.h-1][this.w-1] == 0 || this.s[this.h-1][this.w-1] > this.s[this.h-1][0]) {
+	//fmt.Println(b)
+	if b.s[0][0] < PieceID(NumberOfPieces-2) &&
+		b.s[0][kBoardWidth-1] < PieceID(NumberOfPieces-1) &&
+		b.s[kBoardHeight-1][0] < PieceID(NumberOfPieces) &&
+		(b.s[0][kBoardWidth-1] == 0 || b.s[0][kBoardWidth-1] > b.s[0][0]) &&
+		(b.s[kBoardHeight-1][0] == 0 || b.s[kBoardHeight-1][0] > b.s[0][kBoardWidth-1]) &&
+		(b.s[kBoardHeight-1][kBoardWidth-1] == 0 || b.s[kBoardHeight-1][kBoardWidth-1] > b.s[kBoardHeight-1][0]) {
 		return true
 	}
 	return false
@@ -371,85 +385,86 @@ func (this *Board) CheckCorners() bool {
 
 //var count int = 0
 
-func (this *Board) fillWithPiece(x, y, p_idx int, queue Positions) {
+func (b *Board) fillWithPiece(x, y, p_idx int, queue Positions) {
 	// iterate over all oriented pieces
-	piece := &this.pieces[p_idx]
+	piece := &b.pieces[p_idx]
 	for i := range piece.ops {
 		//fmt.Println(i)
 		op := &piece.ops[i]
 		// iterate over all body blocks
 		for _, offset := range op.body {
 			p := Position{x - offset.x, y - offset.y}
-			ok, new_seeds := this.Insert(p.x, p.y, op, piece.id)
+			ok, new_seeds := b.Insert(p.x, p.y, op, piece.id)
 			if ok {
 				//fmt.Println("\x0c")
-				//fmt.Print("\x1b\x5b\x48\x1b\x5b\x32\x4a", this.s)
-				if this.CheckCorners() {
-					if this.depth == len(this.pieces)-1 {
+				//fmt.Print("\x1b\x5b\x48\x1b\x5b\x32\x4a", b.s)
+				if b.CheckCorners() {
+					if b.depth == len(b.pieces)-1 {
 						// solution found
-						ch <- this.s.Copy()
+						bf := b.s
+						b.ch <- &bf
 					} else {
 						new_queue := append(queue, *new_seeds...)
-						this.depth++
-						this.FillPositions(new_queue)
-						this.depth--
+						b.depth++
+						b.FillPositions(new_queue)
+						b.depth--
 					}
 				} else {
 					//fmt.Println("skipped solution")
 				}
-				this.Remove(p.x, p.y, op)
+				b.Remove(p.x, p.y, op)
 			}
 		}
 	}
 }
 
-func (this *Board) FillPositions(queue Positions) {
+func (b *Board) FillPositions(queue Positions) {
 	var seed Position
 	for i := range queue {
 		seed = queue[i]
-		if this.s[seed.x][seed.y] == 0 {
+		if b.s[seed.x][seed.y] == 0 {
 			queue = queue[i+1:]
 			break
 		}
 	}
 	// we have a free seed now
 	// rotate over all pieces
-	for i := range this.off_board_pieces {
-		if !this.off_board_pieces[i] {
+	for i := range b.used_pieces {
+		if b.used_pieces[i] {
 			continue
 		}
-		this.off_board_pieces[i] = false
-		if this.depth == 0 && i < NumberOfPieces-3 && false {
+		b.used_pieces[i] = true
+		if b.depth == 0 && i < NumberOfPieces-3 && false {
 			// top recursion level
 			new_queue := make(Positions, len(queue))
 			copy(new_queue, queue)
 			fmt.Println("Spawn new goprocess for piece ", i)
-			new_board := this.Copy()
+			new_board := b.Copy()
 			go new_board.fillWithPiece(seed.x, seed.y, i, new_queue)
 		} else {
-			// if this.depth == 1 {
+			// if b.depth == 1 {
 			// 	fmt.Println("Fill with piece ", i)
 			// }
-			this.fillWithPiece(seed.x, seed.y, i, queue)
+			b.fillWithPiece(seed.x, seed.y, i, queue)
 		}
-		this.off_board_pieces[i] = true
+		b.used_pieces[i] = false
 	}
 }
 
-func (this *Board) Fill() {
+func (b *Board) Fill() {
 	seed_init := Positions{Position{0, 0}}
-	go this.FillPositions(seed_init)
+	go b.FillPositions(seed_init)
 }
 
 // String returns the game board as a string.
 
-func (pf PieceField) String() string {
+func (bf *BoardField) String() string {
 	var buf bytes.Buffer
-	for x := range pf {
-		for y := range pf[x] {
+	for x := range bf {
+		for y := range bf[x] {
 			c := "  "
-			if pf[x][y] != 0 {
-				c = string(pf.GetRune(x, y)) + " "
+			if bf[x][y] != 0 {
+				c = string(bf.GetRune(x, y)) + " "
 			}
 			buf.WriteString(c)
 		}
@@ -458,34 +473,25 @@ func (pf PieceField) String() string {
 	return buf.String()
 }
 
-func (pf PieceField) Copy() PieceField {
-	cpy := make(PieceField, len(pf))
-	for i := range cpy {
-		cpy[i] = make([]PieceID, len(pf[i]))
-		copy(cpy[i], pf[i])
-	}
-	return cpy
-}
-
-func (pf PieceField) GetRune(x, y int) rune {
+func (bf *BoardField) GetRune(x, y int) rune {
 	type N struct {
 		up, right, down, left bool
 	}
 	var result rune
 	var up, down, right, left bool
-	id := pf[x][y]
+	id := bf[x][y]
 	return 'A' - 1 + rune(id)
 	return '🍅' - 1 + rune(id)
-	if x > 0 && pf[x-1][y] == id {
+	if x > 0 && bf[x-1][y] == id {
 		up = true
 	}
-	if x < len(pf)-1 && pf[x+1][y] == id {
+	if x < len(bf)-1 && bf[x+1][y] == id {
 		down = true
 	}
-	if y > 0 && pf[x][y-1] == id {
+	if y > 0 && bf[x][y-1] == id {
 		left = true
 	}
-	if y < len(pf[x])-1 && pf[x][y+1] == id {
+	if y < len(bf[x])-1 && bf[x][y+1] == id {
 		right = true
 	}
 	switch (N{up, right, down, left}) {
@@ -523,8 +529,6 @@ func (pf PieceField) GetRune(x, y int) rune {
 	return result
 }
 
-var ch = make(chan PieceField)
-
 func main() {
 	flag.Parse()
 	if *cpuprofile != "" {
@@ -539,16 +543,17 @@ func main() {
 	var pieces [NumberOfPieces]Piece
 	for i := range pieces_init {
 		id := PieceID(i + 1)
-		pieces[i] = NewPiece(pieces_init[i], id)
+		pieces[i] = *NewPiece(pieces_init[i], id)
 	}
 	//	fmt.Println(pieces)
-	b := NewBoard(8, 8, pieces)
+	var ch = make(chan *BoardField)
+	b := NewBoard(&pieces, ch)
 	//	fmt.Println(b)
 	b.Fill()
 	cnt := 0
 	for {
-		pf := <-ch
-		fmt.Print("\x0c", pf)
+		bf := <-ch
+		fmt.Print("\x0c", bf)
 		cnt++
 		fmt.Println(cnt)
 		if cnt == 100 {
