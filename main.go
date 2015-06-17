@@ -2,17 +2,13 @@ package main
 
 import (
 	"bytes"
-	"fmt"
-	"os"
-	"sort"
-	// "math/rand"
-	// "time"
 	"flag"
-	"log"
-	"runtime/pprof"
+	"fmt"
+	"sort"
 )
 
-var cpuprofile = flag.String("cpuprofile", "", "write cpu profile to file")
+var concurdepth = flag.Int("d", -1, "enable concurrency in given recursion depth")
+var stopcount = flag.Int("c", 0, "stop after that many solutions")
 
 const kPieceMaxSize = 5
 const kBoardHeight = 8
@@ -119,7 +115,7 @@ type OrientedPiece struct {
 	body, border Positions
 }
 
-func (op *OrientedPiece) String() string {
+func (op OrientedPiece) String() string {
 	f := make([][]rune, op.h+2)
 	for i := range f {
 		f[i] = make([]rune, op.w+2)
@@ -239,8 +235,9 @@ func (op *OrientedPiece) Mirror() OrientedPiece {
 // Piece
 ///////////////////////////////
 type Piece struct {
-	ops []OrientedPiece
-	id  PieceID
+	ops  []OrientedPiece
+	id   PieceID
+	used bool
 }
 
 func (p Piece) String() string {
@@ -283,7 +280,7 @@ func NewPiece(p PieceField, id PieceID) *Piece {
 }
 
 func (p *Piece) Copy() *Piece {
-	new_piece := Piece{id: p.id}
+	new_piece := Piece{id: p.id, used: p.used}
 	new_piece.ops = make([]OrientedPiece, len(p.ops))
 	for i := range new_piece.ops {
 		new_piece.ops[i] = *p.ops[i].Copy()
@@ -305,11 +302,10 @@ func (p *Piece) Matches(op *OrientedPiece) bool {
 ///////////////////////////////
 
 type Board struct {
-	s           BoardField
-	pieces      [NumberOfPieces]Piece
-	used_pieces [NumberOfPieces]bool
-	ch          chan *BoardField
-	depth       int
+	s      BoardField
+	pieces [NumberOfPieces]Piece
+	ch     chan *BoardField
+	depth  int
 }
 
 // NewBoard returns an empty Board of the specified width and height.
@@ -373,11 +369,10 @@ func (b *Board) CheckCorners() bool {
 	// corner fields have additional conditions to skip equivalent solutions
 	//fmt.Println(b)
 	if b.s[0][0] < PieceID(NumberOfPieces-2) &&
-		b.s[0][kBoardWidth-1] < PieceID(NumberOfPieces-1) &&
-		b.s[kBoardHeight-1][0] < PieceID(NumberOfPieces) &&
+		b.s[0][kBoardWidth-1] < PieceID(NumberOfPieces) &&
 		(b.s[0][kBoardWidth-1] == 0 || b.s[0][kBoardWidth-1] > b.s[0][0]) &&
 		(b.s[kBoardHeight-1][0] == 0 || b.s[kBoardHeight-1][0] > b.s[0][kBoardWidth-1]) &&
-		(b.s[kBoardHeight-1][kBoardWidth-1] == 0 || b.s[kBoardHeight-1][kBoardWidth-1] > b.s[kBoardHeight-1][0]) {
+		(b.s[kBoardHeight-1][kBoardWidth-1] == 0 || b.s[kBoardHeight-1][kBoardWidth-1] > b.s[0][0]) {
 		return true
 	}
 	return false
@@ -429,25 +424,21 @@ func (b *Board) FillPositions(queue Positions) {
 	}
 	// we have a free seed now
 	// rotate over all pieces
-	for i := range b.used_pieces {
-		if b.used_pieces[i] {
+	for i := range b.pieces {
+		if b.pieces[i].used {
 			continue
 		}
-		b.used_pieces[i] = true
-		if b.depth == 0 && i < NumberOfPieces-3 && false {
-			// top recursion level
+		b.pieces[i].used = true
+		if b.depth == *concurdepth {
+			// spawn goroutines at this level
 			new_queue := make(Positions, len(queue))
 			copy(new_queue, queue)
-			fmt.Println("Spawn new goprocess for piece ", i)
 			new_board := b.Copy()
 			go new_board.fillWithPiece(seed.x, seed.y, i, new_queue)
 		} else {
-			// if b.depth == 1 {
-			// 	fmt.Println("Fill with piece ", i)
-			// }
 			b.fillWithPiece(seed.x, seed.y, i, queue)
 		}
-		b.used_pieces[i] = false
+		b.pieces[i].used = false
 	}
 }
 
@@ -457,7 +448,6 @@ func (b *Board) Fill() {
 }
 
 // String returns the game board as a string.
-
 func (bf *BoardField) String() string {
 	var buf bytes.Buffer
 	for x := range bf {
@@ -474,81 +464,19 @@ func (bf *BoardField) String() string {
 }
 
 func (bf *BoardField) GetRune(x, y int) rune {
-	type N struct {
-		up, right, down, left bool
-	}
-	var result rune
-	var up, down, right, left bool
-	id := bf[x][y]
-	return 'A' - 1 + rune(id)
-	return '🍅' - 1 + rune(id)
-	if x > 0 && bf[x-1][y] == id {
-		up = true
-	}
-	if x < len(bf)-1 && bf[x+1][y] == id {
-		down = true
-	}
-	if y > 0 && bf[x][y-1] == id {
-		left = true
-	}
-	if y < len(bf[x])-1 && bf[x][y+1] == id {
-		right = true
-	}
-	switch (N{up, right, down, left}) {
-	case N{true, false, false, false}:
-		result = '╹'
-	case N{false, true, false, false}:
-		result = '╺'
-	case N{false, false, true, false}:
-		result = '╻'
-	case N{false, false, false, true}:
-		result = '╸'
-	case N{true, true, false, false}:
-		result = '┗'
-	case N{true, false, true, false}:
-		result = '┃'
-	case N{true, false, false, true}:
-		result = '┛'
-	case N{false, true, true, false}:
-		result = '┏'
-	case N{false, true, false, true}:
-		result = '━'
-	case N{false, false, true, true}:
-		result = '┓'
-	case N{true, true, true, false}:
-		result = '┣'
-	case N{true, true, false, true}:
-		result = '┻'
-	case N{true, false, true, true}:
-		result = '┫'
-	case N{false, true, true, true}:
-		result = '┳'
-	case N{true, true, true, true}:
-		result = '╋'
-	}
-	return result
+	return '🍅' - 1 + rune(bf[x][y])
 }
 
 func main() {
 	flag.Parse()
-	if *cpuprofile != "" {
-		f, err := os.Create(*cpuprofile)
-		if err != nil {
-			log.Fatal(err)
-		}
-		pprof.StartCPUProfile(f)
-		defer pprof.StopCPUProfile()
-	}
-
 	var pieces [NumberOfPieces]Piece
 	for i := range pieces_init {
 		id := PieceID(i + 1)
 		pieces[i] = *NewPiece(pieces_init[i], id)
 	}
-	//	fmt.Println(pieces)
+	fmt.Println(pieces)
 	var ch = make(chan *BoardField)
 	b := NewBoard(&pieces, ch)
-	//	fmt.Println(b)
 	b.Fill()
 	cnt := 0
 	for {
@@ -556,9 +484,8 @@ func main() {
 		fmt.Print("\x0c", bf)
 		cnt++
 		fmt.Println(cnt)
-		if cnt == 100 {
-			pprof.StopCPUProfile()
-			os.Exit(0)
+		if cnt == *stopcount {
+			break
 		}
 
 	}
