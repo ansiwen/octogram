@@ -16,7 +16,6 @@ const kBoardWidth = 8
 
 type PieceID int
 type PieceField [kPieceMaxSize][kPieceMaxSize]PieceID
-type BoardField [kBoardHeight][kBoardWidth]PieceID
 
 // list of available pieces
 var pieces_init = [...]PieceField{
@@ -80,12 +79,11 @@ var pieces_init = [...]PieceField{
 	},
 }
 
-const NumberOfPieces = len(pieces_init)
+const kNumberOfPieces = len(pieces_init)
 
 ///////////////////////////////
 // Position
 ///////////////////////////////
-
 type Position struct {
 	x, y int
 }
@@ -298,18 +296,42 @@ func (p *Piece) Matches(op *OrientedPiece) bool {
 }
 
 ///////////////////////////////
+// BoardField
+///////////////////////////////
+type BoardField [kBoardHeight][kBoardWidth]PieceID
+
+// String returns the game board as a string.
+func (bf *BoardField) String() string {
+	var buf bytes.Buffer
+	for x := range bf {
+		for y := range bf[x] {
+			c := "  "
+			if bf[x][y] != 0 {
+				c = string(bf.GetRune(x, y)) + " "
+			}
+			buf.WriteString(c)
+		}
+		buf.WriteByte('\n')
+	}
+	return buf.String()
+}
+
+func (bf *BoardField) GetRune(x, y int) rune {
+	return '🍅' - 1 + rune(bf[x][y])
+}
+
+///////////////////////////////
 // Board
 ///////////////////////////////
-
 type Board struct {
 	s      BoardField
-	pieces [NumberOfPieces]Piece
+	pieces [kNumberOfPieces]Piece
 	ch     chan *BoardField
 	depth  int
 }
 
 // NewBoard returns an empty Board of the specified width and height.
-func NewBoard(pieces *[NumberOfPieces]Piece, ch chan *BoardField) *Board {
+func NewBoard(pieces *[kNumberOfPieces]Piece, ch chan *BoardField) *Board {
 	new_board := Board{pieces: *pieces, ch: ch}
 	return &new_board
 }
@@ -367,9 +389,8 @@ func (b *Board) Remove(x, y int, op *OrientedPiece) {
 
 func (b *Board) CheckCorners() bool {
 	// corner fields have additional conditions to skip equivalent solutions
-	//fmt.Println(b)
-	if b.s[0][0] < PieceID(NumberOfPieces-2) &&
-		b.s[0][kBoardWidth-1] < PieceID(NumberOfPieces) &&
+	if b.s[0][0] < PieceID(kNumberOfPieces-2) &&
+		b.s[0][kBoardWidth-1] < PieceID(kNumberOfPieces) &&
 		(b.s[0][kBoardWidth-1] == 0 || b.s[0][kBoardWidth-1] > b.s[0][0]) &&
 		(b.s[kBoardHeight-1][0] == 0 || b.s[kBoardHeight-1][0] > b.s[0][kBoardWidth-1]) &&
 		(b.s[kBoardHeight-1][kBoardWidth-1] == 0 || b.s[kBoardHeight-1][kBoardWidth-1] > b.s[0][0]) {
@@ -378,23 +399,18 @@ func (b *Board) CheckCorners() bool {
 	return false
 }
 
-//var count int = 0
-
 func (b *Board) fillWithPiece(x, y, p_idx int, queue Positions) {
 	// iterate over all oriented pieces
 	piece := &b.pieces[p_idx]
 	for i := range piece.ops {
-		//fmt.Println(i)
 		op := &piece.ops[i]
 		// iterate over all body blocks
 		for _, offset := range op.body {
 			p := Position{x - offset.x, y - offset.y}
 			ok, new_seeds := b.Insert(p.x, p.y, op, piece.id)
 			if ok {
-				//fmt.Println("\x0c")
-				//fmt.Print("\x1b\x5b\x48\x1b\x5b\x32\x4a", b.s)
 				if b.CheckCorners() {
-					if b.depth == len(b.pieces)-1 {
+					if b.depth == kNumberOfPieces-1 {
 						// solution found
 						bf := b.s
 						b.ch <- &bf
@@ -404,8 +420,6 @@ func (b *Board) fillWithPiece(x, y, p_idx int, queue Positions) {
 						b.FillPositions(new_queue)
 						b.depth--
 					}
-				} else {
-					//fmt.Println("skipped solution")
 				}
 				b.Remove(p.x, p.y, op)
 			}
@@ -447,29 +461,9 @@ func (b *Board) Fill() {
 	go b.FillPositions(seed_init)
 }
 
-// String returns the game board as a string.
-func (bf *BoardField) String() string {
-	var buf bytes.Buffer
-	for x := range bf {
-		for y := range bf[x] {
-			c := "  "
-			if bf[x][y] != 0 {
-				c = string(bf.GetRune(x, y)) + " "
-			}
-			buf.WriteString(c)
-		}
-		buf.WriteByte('\n')
-	}
-	return buf.String()
-}
-
-func (bf *BoardField) GetRune(x, y int) rune {
-	return '🍅' - 1 + rune(bf[x][y])
-}
-
 func main() {
 	flag.Parse()
-	var pieces [NumberOfPieces]Piece
+	var pieces [kNumberOfPieces]Piece
 	for i := range pieces_init {
 		id := PieceID(i + 1)
 		pieces[i] = *NewPiece(pieces_init[i], id)
@@ -481,9 +475,9 @@ func main() {
 	cnt := 0
 	for {
 		bf := <-ch
-		fmt.Print("\x0c", bf)
 		cnt++
-		fmt.Println(cnt)
+		fmt.Println("Solution ", cnt)
+		fmt.Println(bf)
 		if cnt == *stopcount {
 			break
 		}
