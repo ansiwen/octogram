@@ -4,11 +4,14 @@ import (
 	"bytes"
 	"flag"
 	"fmt"
+	"runtime"
 	"sort"
+	"sync"
 )
 
 var concurdepth = flag.Int("d", -1, "enable concurrency in given recursion depth")
 var stopcount = flag.Int("c", 0, "stop after that many solutions")
+var numberofcpus = flag.Int("j", 1, "how many CPU cores to be used")
 
 const kPieceMaxSize = 5
 const kBoardHeight = 8
@@ -328,6 +331,7 @@ type Board struct {
 	pieces [kNumberOfPieces]Piece
 	ch     chan *BoardField
 	depth  int
+	wg     sync.WaitGroup
 }
 
 // NewBoard returns an empty Board of the specified width and height.
@@ -344,41 +348,26 @@ func (b *Board) Copy() *Board {
 	return &new_board
 }
 
-func (b *Board) Get(x, y int) PieceID {
-	if b.Contains(x, y) {
-		return b.s[x][y]
-	} else {
-		return PieceID(-1)
-	}
-}
-
-func (b *Board) Contains(x, y int) bool {
-	if x >= 0 && x < kBoardHeight && y >= 0 && y < kBoardWidth {
-		return true
-	}
-	return false
-}
-
-func (b *Board) Insert(x, y int, op *OrientedPiece, id PieceID) (bool, *Positions) {
+func (b *Board) Insert(x, y int, op *OrientedPiece, id PieceID, queue *Positions) (bool, *Positions) {
 	if x < 0 || y < 0 || x+op.h > kBoardHeight || y+op.w > kBoardWidth {
 		return false, nil
 	}
 	for _, p := range op.body {
-		if b.Get(p.x+x, p.y+y) != 0 {
+		if b.s[p.x+x][p.y+y] != 0 {
 			return false, nil
 		}
 	}
 	for _, p := range op.body {
 		b.s[p.x+x][p.y+y] = id
 	}
-	var new_seeds Positions
-	for _, p := range op.border {
-		p2 := Position{p.x + x, p.y + y}
-		if b.Contains(p2.x, p2.y) {
-			new_seeds = append(new_seeds, p2)
+	var new_queue = *queue
+	for i := range op.border {
+		p := Position{op.border[i].x + x, op.border[i].y + y}
+		if p.x >= 0 && p.x < kBoardHeight && p.y >= 0 && p.y < kBoardWidth {
+			new_queue = append(new_queue, p)
 		}
 	}
-	return true, &new_seeds
+	return true, &new_queue
 }
 
 func (b *Board) Remove(x, y int, op *OrientedPiece) {
@@ -388,7 +377,8 @@ func (b *Board) Remove(x, y int, op *OrientedPiece) {
 }
 
 func (b *Board) CheckCorners() bool {
-	// corner fields have additional conditions to skip equivalent solutions
+	// corner fields have additional conditions to skip equivalent solutions:
+	// upper left must be smallest, and upper right must by smaller than lower left
 	if b.s[0][0] < PieceID(kNumberOfPieces-2) &&
 		b.s[0][kBoardWidth-1] < PieceID(kNumberOfPieces) &&
 		(b.s[0][kBoardWidth-1] == 0 || b.s[0][kBoardWidth-1] > b.s[0][0]) &&
@@ -407,7 +397,7 @@ func (b *Board) fillWithPiece(x, y, p_idx int, queue Positions) {
 		// iterate over all body blocks
 		for _, offset := range op.body {
 			p := Position{x - offset.x, y - offset.y}
-			ok, new_seeds := b.Insert(p.x, p.y, op, piece.id)
+			ok, new_queue := b.Insert(p.x, p.y, op, piece.id, &queue)
 			if ok {
 				if b.CheckCorners() {
 					if b.depth == kNumberOfPieces-1 {
@@ -415,9 +405,8 @@ func (b *Board) fillWithPiece(x, y, p_idx int, queue Positions) {
 						bf := b.s
 						b.ch <- &bf
 					} else {
-						new_queue := append(queue, *new_seeds...)
 						b.depth++
-						b.FillPositions(new_queue)
+						b.FillPositions(*new_queue)
 						b.depth--
 					}
 				}
@@ -442,13 +431,23 @@ func (b *Board) FillPositions(queue Positions) {
 		if b.pieces[i].used {
 			continue
 		}
+		if b.depth == 0 && i != 9 {
+			continue
+		}
 		b.pieces[i].used = true
 		if b.depth == *concurdepth {
 			// spawn goroutines at this level
 			new_queue := make(Positions, len(queue))
 			copy(new_queue, queue)
 			new_board := b.Copy()
-			go new_board.fillWithPiece(seed.x, seed.y, i, new_queue)
+			b.wg.Add(1)
+			// make copies of i and seed for local scope
+			i := i
+			seed := seed
+			go func() {
+				defer b.wg.Done()
+				new_board.fillWithPiece(seed.x, seed.y, i, new_queue)
+			}()
 		} else {
 			b.fillWithPiece(seed.x, seed.y, i, queue)
 		}
@@ -458,11 +457,19 @@ func (b *Board) FillPositions(queue Positions) {
 
 func (b *Board) Fill() {
 	seed_init := Positions{Position{0, 0}}
-	go b.FillPositions(seed_init)
+	go func() {
+		b.FillPositions(seed_init)
+		b.wg.Wait()
+		b.ch <- nil
+	}()
 }
 
+///////////////////////////////
+// Main
+///////////////////////////////
 func main() {
 	flag.Parse()
+	runtime.GOMAXPROCS(*numberofcpus)
 	var pieces [kNumberOfPieces]Piece
 	for i := range pieces_init {
 		id := PieceID(i + 1)
@@ -475,12 +482,15 @@ func main() {
 	cnt := 0
 	for {
 		bf := <-ch
+		if bf == nil {
+			// all solver terminated
+			break
+		}
 		cnt++
 		fmt.Println("Solution ", cnt)
 		fmt.Println(bf)
 		if cnt == *stopcount {
 			break
 		}
-
 	}
 }
