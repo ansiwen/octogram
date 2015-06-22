@@ -329,6 +329,8 @@ func (bf *BoardField) GetRune(x, y int) rune {
 type Board struct {
 	s      BoardField
 	pieces [kNumberOfPieces]Piece
+	queue  Positions
+	pos    int
 	ch     chan *BoardField
 	depth  int
 	wg     sync.WaitGroup
@@ -345,29 +347,30 @@ func (b *Board) Copy() *Board {
 	for i := range new_board.pieces {
 		new_board.pieces[i] = *b.pieces[i].Copy()
 	}
+	// new_board.queue = make(Positions, len(b.queue))
+	// copy(new_board.queue, b.queue)
 	return &new_board
 }
 
-func (b *Board) Insert(x, y int, op *OrientedPiece, id PieceID, queue *Positions) (bool, *Positions) {
+func (b *Board) Insert(x, y int, op *OrientedPiece, id PieceID) bool {
 	if x < 0 || y < 0 || x+op.h > kBoardHeight || y+op.w > kBoardWidth {
-		return false, nil
+		return false
 	}
 	for _, p := range op.body {
 		if b.s[p.x+x][p.y+y] != 0 {
-			return false, nil
+			return false
 		}
 	}
 	for _, p := range op.body {
 		b.s[p.x+x][p.y+y] = id
 	}
-	var new_queue = *queue
 	for i := range op.border {
 		p := Position{op.border[i].x + x, op.border[i].y + y}
 		if p.x >= 0 && p.x < kBoardHeight && p.y >= 0 && p.y < kBoardWidth {
-			new_queue = append(new_queue, p)
+			b.queue = append(b.queue, p)
 		}
 	}
-	return true, &new_queue
+	return true
 }
 
 func (b *Board) Remove(x, y int, op *OrientedPiece) {
@@ -389,7 +392,7 @@ func (b *Board) CheckCorners() bool {
 	return false
 }
 
-func (b *Board) fillWithPiece(x, y, p_idx int, queue Positions) {
+func (b *Board) fillWithPiece(x, y, p_idx, q_idx int) {
 	// iterate over all oriented pieces
 	piece := &b.pieces[p_idx]
 	for i := range piece.ops {
@@ -397,7 +400,8 @@ func (b *Board) fillWithPiece(x, y, p_idx int, queue Positions) {
 		// iterate over all body blocks
 		for _, offset := range op.body {
 			p := Position{x - offset.x, y - offset.y}
-			ok, new_queue := b.Insert(p.x, p.y, op, piece.id, &queue)
+			old_q_len := len(b.queue)
+			ok := b.Insert(p.x, p.y, op, piece.id)
 			if ok {
 				if b.CheckCorners() {
 					if b.depth == kNumberOfPieces-1 {
@@ -406,22 +410,23 @@ func (b *Board) fillWithPiece(x, y, p_idx int, queue Positions) {
 						b.ch <- &bf
 					} else {
 						b.depth++
-						b.FillPositions(*new_queue)
+						b.FillPositions(q_idx)
 						b.depth--
 					}
 				}
 				b.Remove(p.x, p.y, op)
+				b.queue = b.queue[0:old_q_len]
 			}
 		}
 	}
 }
 
-func (b *Board) FillPositions(queue Positions) {
+func (b *Board) FillPositions(q_idx int) {
 	var seed Position
-	for i := range queue {
-		seed = queue[i]
+	for i := q_idx; i < len(b.queue); i++ {
+		seed = b.queue[i]
 		if b.s[seed.x][seed.y] == 0 {
-			queue = queue[i+1:]
+			q_idx = i + 1
 			break
 		}
 	}
@@ -431,34 +436,34 @@ func (b *Board) FillPositions(queue Positions) {
 		if b.pieces[i].used {
 			continue
 		}
-		if b.depth == 0 && i != 9 {
-			continue
-		}
+		// if b.depth == 0 && i != 9 {
+		// 	continue
+		// }
 		b.pieces[i].used = true
 		if b.depth == *concurdepth {
 			// spawn goroutines at this level
-			new_queue := make(Positions, len(queue))
-			copy(new_queue, queue)
 			new_board := b.Copy()
-			b.wg.Add(1)
+			new_board.queue = make(Positions, len(b.queue)-q_idx)
+			copy(new_board.queue, b.queue[q_idx:])
 			// make copies of i and seed for local scope
 			i := i
 			seed := seed
+			b.wg.Add(1)
 			go func() {
 				defer b.wg.Done()
-				new_board.fillWithPiece(seed.x, seed.y, i, new_queue)
+				new_board.fillWithPiece(seed.x, seed.y, i, 0)
 			}()
 		} else {
-			b.fillWithPiece(seed.x, seed.y, i, queue)
+			b.fillWithPiece(seed.x, seed.y, i, q_idx)
 		}
 		b.pieces[i].used = false
 	}
 }
 
 func (b *Board) Fill() {
-	seed_init := Positions{Position{0, 0}}
+	b.queue = Positions{Position{0, 0}}
 	go func() {
-		b.FillPositions(seed_init)
+		b.FillPositions(0)
 		b.wg.Wait()
 		b.ch <- nil
 	}()
