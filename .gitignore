@@ -6,3 +6,9 @@ octogram
 *.sublime-project
 
 *.sublime-workspace
+
+perf.data
+
+perf.data.old
+
+callgrind.out.*
