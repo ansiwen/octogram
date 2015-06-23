@@ -327,7 +327,7 @@ func (bf *BoardField) getRune(x, y int) rune {
 // board
 ///////////////////////////////
 type board struct {
-	s      BoardField
+	f      BoardField
 	pieces [kNumberOfPieces]piece
 	queue  positions
 	pos    int
@@ -347,25 +347,24 @@ func (b *board) copy() *board {
 	for i := range new_board.pieces {
 		new_board.pieces[i] = *b.pieces[i].copy()
 	}
-	// new_board.queue = make(positions, len(b.queue))
-	// copy(new_board.queue, b.queue)
+	// don't copy queue
 	return &new_board
 }
 
 func (b *board) set(x, y int, op *orientedPiece, id pieceID) {
 	for _, p := range op.body {
-		b.s[p.x+x][p.y+y] = id
+		b.f[p.x+x][p.y+y] = id
 	}
 }
 
 func (b *board) checkCorners() bool {
 	// corner fields have additional conditions to skip equivalent solutions:
 	// upper left must be smallest, and upper right must by smaller than lower left
-	if b.s[0][0] < pieceID(kNumberOfPieces-2) &&
-		b.s[0][kBoardWidth-1] < pieceID(kNumberOfPieces) &&
-		(b.s[0][kBoardWidth-1] == 0 || b.s[0][kBoardWidth-1] > b.s[0][0]) &&
-		(b.s[kBoardHeight-1][0] == 0 || b.s[kBoardHeight-1][0] > b.s[0][kBoardWidth-1]) &&
-		(b.s[kBoardHeight-1][kBoardWidth-1] == 0 || b.s[kBoardHeight-1][kBoardWidth-1] > b.s[0][0]) {
+	if b.f[0][0] < pieceID(kNumberOfPieces-2) &&
+		b.f[0][kBoardWidth-1] < pieceID(kNumberOfPieces) &&
+		(b.f[0][kBoardWidth-1] == 0 || b.f[0][kBoardWidth-1] > b.f[0][0]) &&
+		(b.f[kBoardHeight-1][0] == 0 || b.f[kBoardHeight-1][0] > b.f[0][kBoardWidth-1]) &&
+		(b.f[kBoardHeight-1][kBoardWidth-1] == 0 || b.f[kBoardHeight-1][kBoardWidth-1] > b.f[0][0]) {
 		return true
 	}
 	return false
@@ -374,7 +373,6 @@ func (b *board) checkCorners() bool {
 func (b *board) fillWithPiece(x, y, p_idx, q_idx int) {
 	piece := &b.pieces[p_idx]
 	// iterate over all oriented pieces
-	//orientedPiece:
 	for i := range piece.ops {
 		op := &piece.ops[i]
 		// iterate over all body blocks as possible offsets
@@ -387,7 +385,7 @@ func (b *board) fillWithPiece(x, y, p_idx, q_idx int) {
 			}
 			// piece is inside board
 			for _, p2 := range op.body {
-				if b.s[p.x+p2.x][p.y+p2.y] != 0 {
+				if b.f[p.x+p2.x][p.y+p2.y] != 0 {
 					// block is not free, try next offset
 					continue OffsetLoop
 				}
@@ -398,14 +396,14 @@ func (b *board) fillWithPiece(x, y, p_idx, q_idx int) {
 			for i := range op.border {
 				p2 := position{op.border[i].x + p.x, op.border[i].y + p.y}
 				if p2.x >= 0 && p2.x < kBoardHeight && p2.y >= 0 && p2.y < kBoardWidth &&
-					b.s[p2.x][p2.y] == 0 {
+					b.f[p2.x][p2.y] == 0 {
 					b.queue = append(b.queue, p2)
 				}
 			}
 			if b.checkCorners() {
 				if b.depth == kNumberOfPieces-1 {
 					// solution found
-					bf := b.s
+					bf := b.f
 					b.ch <- &bf
 				} else {
 					b.depth++
@@ -423,7 +421,7 @@ func (b *board) fillPositions(q_idx int) {
 	var seed position
 	for i := q_idx; i < len(b.queue); i++ {
 		seed = b.queue[i]
-		if b.s[seed.x][seed.y] == 0 {
+		if b.f[seed.x][seed.y] == 0 {
 			q_idx = i + 1
 			break
 		}
@@ -434,9 +432,6 @@ func (b *board) fillPositions(q_idx int) {
 		if b.pieces[i].used {
 			continue
 		}
-		// if b.depth == 0 && i != 9 {
-		// 	continue
-		// }
 		b.pieces[i].used = true
 		if b.depth == *concurdepth {
 			// spawn goroutines at this level
