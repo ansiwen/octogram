@@ -352,30 +352,9 @@ func (b *Board) Copy() *Board {
 	return &new_board
 }
 
-func (b *Board) Insert(x, y int, op *OrientedPiece, id PieceID) bool {
-	if x < 0 || y < 0 || x+op.h > kBoardHeight || y+op.w > kBoardWidth {
-		return false
-	}
-	for _, p := range op.body {
-		if b.s[p.x+x][p.y+y] != 0 {
-			return false
-		}
-	}
+func (b *Board) Set(x, y int, op *OrientedPiece, id PieceID) {
 	for _, p := range op.body {
 		b.s[p.x+x][p.y+y] = id
-	}
-	for i := range op.border {
-		p := Position{op.border[i].x + x, op.border[i].y + y}
-		if p.x >= 0 && p.x < kBoardHeight && p.y >= 0 && p.y < kBoardWidth {
-			b.queue = append(b.queue, p)
-		}
-	}
-	return true
-}
-
-func (b *Board) Remove(x, y int, op *OrientedPiece) {
-	for _, p := range op.body {
-		b.s[p.x+x][p.y+y] = 0
 	}
 }
 
@@ -393,30 +372,49 @@ func (b *Board) CheckCorners() bool {
 }
 
 func (b *Board) fillWithPiece(x, y, p_idx, q_idx int) {
-	// iterate over all oriented pieces
 	piece := &b.pieces[p_idx]
+	// iterate over all oriented pieces
+	//OrientedPiece:
 	for i := range piece.ops {
 		op := &piece.ops[i]
-		// iterate over all body blocks
+		// iterate over all body blocks as possible offsets
+	OffsetLoop:
 		for _, offset := range op.body {
 			p := Position{x - offset.x, y - offset.y}
 			old_q_len := len(b.queue)
-			ok := b.Insert(p.x, p.y, op, piece.id)
-			if ok {
-				if b.CheckCorners() {
-					if b.depth == kNumberOfPieces-1 {
-						// solution found
-						bf := b.s
-						b.ch <- &bf
-					} else {
-						b.depth++
-						b.FillPositions(q_idx)
-						b.depth--
-					}
-				}
-				b.Remove(p.x, p.y, op)
-				b.queue = b.queue[0:old_q_len]
+			if p.x < 0 || p.y < 0 || p.x+op.h > kBoardHeight || p.y+op.w > kBoardWidth {
+				continue OffsetLoop
 			}
+			// piece is inside board
+			for _, p2 := range op.body {
+				if b.s[p.x+p2.x][p.y+p2.y] != 0 {
+					// block is not free, try next offset
+					continue OffsetLoop
+				}
+			}
+			// every block free, insert piece into board now
+			b.Set(p.x, p.y, op, piece.id)
+			// insert free border blocks into fill queue
+			for i := range op.border {
+				p2 := Position{op.border[i].x + p.x, op.border[i].y + p.y}
+				if p2.x >= 0 && p2.x < kBoardHeight && p2.y >= 0 && p2.y < kBoardWidth &&
+					b.s[p2.x][p2.y] == 0 {
+					b.queue = append(b.queue, p2)
+				}
+			}
+			if b.CheckCorners() {
+				if b.depth == kNumberOfPieces-1 {
+					// solution found
+					bf := b.s
+					b.ch <- &bf
+				} else {
+					b.depth++
+					b.FillPositions(q_idx)
+					b.depth--
+				}
+			}
+			b.Set(p.x, p.y, op, 0)
+			b.queue = b.queue[0:old_q_len]
 		}
 	}
 }
