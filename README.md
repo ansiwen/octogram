@@ -16,3 +16,5 @@ My single-threaded C++ implementation found all possible solutions (16146) in 22
 This is my implementation in Go, that can find solutions concurrently (see -d option).
 
 I am very interested in even faster algorithms or hints how I can further improve my algorithm, so please comment!
+
+<a rel="license" href="http://creativecommons.org/licenses/by-nc-sa/4.0/"><img alt="Creative Commons License" style="border-width:0" src="https://i.creativecommons.org/l/by-nc-sa/4.0/88x31.png" /></a><br />This work is licensed under a <a rel="license" href="http://creativecommons.org/licenses/by-nc-sa/4.0/">Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International License</a>.
