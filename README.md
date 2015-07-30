@@ -13,7 +13,7 @@ Since every solution exists in 8 equivalent orientations (4 rotations x 2 transp
 
 My single-threaded C++ implementation found all possible solutions (16146) in 22 minutes on a 2.6 GHz CPU, compiled with g++ 4.4.3 and -O3.
 
-This is my implementation in Go, that can find solutions concurrently (see -d option).
+This is my implementation in Go, that can find solutions concurrently (see -d option). It can find all solutions in under two minutes on a 12 core system.
 
 I am very interested in even faster algorithms or hints how I can further improve my algorithm, so please comment!
 
